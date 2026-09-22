@@ -26,6 +26,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: result.message }, { status: 400 })
   }
 
+  // A replayed key is not a new card, so it is 200 with no number — the number
+  // was revealed once, on the original request, and cannot be re-read.
+  if (result.replayed) {
+    return NextResponse.json({ card: result.card, replayed: true })
+  }
+
   return NextResponse.json(
     { card: result.card, cardNumber: result.cardNumber },
     { status: 201 },

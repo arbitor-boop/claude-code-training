@@ -37,6 +37,26 @@ export function IssueCardForm({ merchants }: { merchants: MerchantOption[] }) {
     last4: string
   } | null>(null)
 
+  // One key per attempt. Two clicks send the same key, so the server issues one
+  // card; a fresh key is minted only once an attempt has succeeded.
+  const idempotencyKey = React.useRef<string>(crypto.randomUUID())
+  const panelRef = React.useRef<HTMLDivElement>(null)
+  const triggerRef = React.useRef<HTMLButtonElement>(null)
+
+  // Moving focus to the panel means a keyboard or screen-reader user is told
+  // the card exists, rather than being left on a button that no longer exists.
+  // Only on an actual transition — focusing on first mount would hijack the page.
+  const wasIssued = React.useRef(false)
+  React.useEffect(() => {
+    if (issued) {
+      panelRef.current?.focus()
+      wasIssued.current = true
+    } else if (wasIssued.current) {
+      triggerRef.current?.focus()
+      wasIssued.current = false
+    }
+  }, [issued])
+
   const selected = merchants.find((m) => m.id === merchantId)
 
   // The merchant settles in one currency, so follow it rather than let ops
@@ -57,7 +77,13 @@ export function IssueCardForm({ merchants }: { merchants: MerchantOption[] }) {
       const response = await fetch("/api/cards", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ nickname, merchantId, limit, currency }),
+        body: JSON.stringify({
+          nickname,
+          merchantId,
+          limit,
+          currency,
+          idempotencyKey: idempotencyKey.current,
+        }),
       })
       const payload = await response.json()
 
@@ -68,9 +94,10 @@ export function IssueCardForm({ merchants }: { merchants: MerchantOption[] }) {
 
       setIssued({
         nickname: payload.card.nickname,
-        cardNumber: payload.cardNumber,
+        cardNumber: payload.cardNumber ?? "",
         last4: payload.card.last4,
       })
+      idempotencyKey.current = crypto.randomUUID()
       setNickname("")
       setMerchantId("")
       setLimit("")
@@ -86,19 +113,34 @@ export function IssueCardForm({ merchants }: { merchants: MerchantOption[] }) {
   if (issued) {
     return (
       <div
-        className="rounded-md border border-emerald-500/30 bg-emerald-50 p-4 dark:bg-emerald-950/30"
+        className={cx(
+          "rounded-md border border-emerald-500/30 bg-emerald-50 p-4 dark:bg-emerald-950/30",
+          focusInput,
+        )}
         role="status"
+        tabIndex={-1}
+        ref={panelRef}
       >
         <p className="font-medium text-gray-900 dark:text-gray-50">
           {issued.nickname} is live
         </p>
-        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-          This is the only time the full number is shown. Copy it now — after
-          this it is {maskLast4(issued.last4)} everywhere.
-        </p>
-        <p className="mt-3 font-mono text-lg tracking-wider text-gray-900 tabular-nums dark:text-gray-50">
-          {issued.cardNumber}
-        </p>
+        {issued.cardNumber ? (
+          <>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              This is the only time the full number is shown. Copy it now —
+              after this it is {maskLast4(issued.last4)} everywhere.
+            </p>
+            <p className="mt-3 font-mono text-lg tracking-wider text-gray-900 tabular-nums dark:text-gray-50">
+              {issued.cardNumber}
+            </p>
+          </>
+        ) : (
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            This card was already issued by an earlier click, so no second card
+            was created. Its number was shown once then and cannot be shown
+            again — it is {maskLast4(issued.last4)} from here on.
+          </p>
+        )}
         <Button
           variant="secondary"
           className="mt-4 py-1.5"
@@ -216,7 +258,12 @@ export function IssueCardForm({ merchants }: { merchants: MerchantOption[] }) {
           </p>
         )}
 
-        <Button type="submit" isLoading={pending} loadingText="Issuing...">
+        <Button
+          type="submit"
+          ref={triggerRef}
+          isLoading={pending}
+          loadingText="Issuing..."
+        >
           Issue card
         </Button>
       </fieldset>

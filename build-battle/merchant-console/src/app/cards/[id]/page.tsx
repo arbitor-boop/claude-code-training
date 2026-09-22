@@ -2,11 +2,10 @@ import { StatusBadge } from "@/components/ui/payments/StatusBadge"
 import { cardById } from "@/data/cards"
 import { merchantById } from "@/data/merchants"
 import { maskLast4, spendState } from "@/lib/cards"
-import { formatDate } from "@/lib/dates"
+import { formatDate, formatInZone } from "@/lib/dates"
 import { formatMoney } from "@/lib/money"
 import { cx } from "@/lib/utils"
 import Link from "next/link"
-import { notFound } from "next/navigation"
 import { CardActions } from "../card-actions"
 
 /**
@@ -28,7 +27,31 @@ export default async function CardDetailPage({
 }) {
   const { id } = await params
   const card = cardById(id)
-  if (!card) notFound()
+
+  // Cards live in memory, so a link that worked before a restart lands here.
+  // That deserves an explanation rather than a bare 404.
+  if (!card) {
+    return (
+      <section aria-label="Card not found" className="px-4 py-6 sm:p-6">
+        <Link
+          href="/cards"
+          className="text-sm text-blue-600 hover:underline dark:text-blue-500"
+        >
+          ← All cards
+        </Link>
+        <div className="mt-8 max-w-md">
+          <h1 className="font-medium text-gray-900 dark:text-gray-50">
+            No card with the id {id}
+          </h1>
+          <p className="mt-1 text-gray-500">
+            Cards are held in memory and are cleared when the server restarts,
+            so a link from an earlier session will not resolve. Issue a new card
+            from the cards page.
+          </p>
+        </div>
+      </section>
+    )
+  }
 
   const merchant = merchantById(card.merchantId)
   const spend = spendState(card.spentMinor, card.limitMinor)
@@ -104,6 +127,31 @@ export default async function CardDetailPage({
           </div>
         ))}
       </dl>
+
+      <div className="mt-8 max-w-xl">
+        <h2 className="text-sm font-medium text-gray-900 dark:text-gray-50">
+          History
+        </h2>
+        <ol className="mt-2 divide-y divide-gray-200 dark:divide-gray-800">
+          {[...card.history].reverse().map((event, index) => (
+            <li
+              key={`${event.at}-${index}`}
+              className="flex justify-between gap-4 py-2.5 text-sm"
+            >
+              <span className="capitalize text-gray-900 dark:text-gray-50">
+                {event.from === null
+                  ? "Issued"
+                  : `${event.from} → ${event.to}`}
+              </span>
+              <span className="text-gray-500">
+                {merchant
+                  ? formatInZone(event.at, merchant.timezone)
+                  : formatDate(event.at)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
 
       <div className="mt-6">
         <CardActions cardId={card.id} status={card.status} />

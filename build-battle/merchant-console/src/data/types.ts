@@ -73,6 +73,15 @@ export interface Payout {
 
 export type CardStatus = "active" | "frozen" | "cancelled"
 
+/** One entry in a card's history, so "what happened to it" has an answer. */
+export interface CardEvent {
+  /** ISO 8601, always UTC. */
+  at: string
+  /** null for the issuing event, which has no prior state. */
+  from: CardStatus | null
+  to: CardStatus
+}
+
 export interface Card {
   id: string
   nickname: string
@@ -89,6 +98,13 @@ export interface Card {
   reference: string
   /** ISO 8601, always UTC. */
   createdAt: string
+  /** Issuing, then every status change since. Oldest first. */
+  history: CardEvent[]
+  /**
+   * Set when the client supplied one. Replaying the same key returns the
+   * original card rather than issuing a second one.
+   */
+  idempotencyKey?: string
 }
 
 export interface PaymentFilters {

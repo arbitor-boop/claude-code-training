@@ -120,6 +120,73 @@ describe("createCard", () => {
   })
 })
 
+describe("idempotency", () => {
+  it("issues one card when the same key arrives twice", () => {
+    const input = { ...valid, idempotencyKey: "key-abc" }
+    const first = createCard(input)
+    const second = createCard(input)
+
+    expect(first.ok && second.ok).toBe(true)
+    expect(store.cards).toHaveLength(1)
+    if (first.ok && second.ok) {
+      expect(second.card.id).toBe(first.card.id)
+      expect(second.replayed).toBe(true)
+      // The number was revealed once. A replay does not get to see it again.
+      expect(second.cardNumber).toBe("")
+    }
+  })
+
+  it("issues separate cards for separate keys", () => {
+    createCard({ ...valid, idempotencyKey: "key-1" })
+    createCard({ ...valid, idempotencyKey: "key-2" })
+    expect(store.cards).toHaveLength(2)
+  })
+
+  it("still issues when no key is supplied", () => {
+    createCard(valid)
+    createCard(valid)
+    expect(store.cards).toHaveLength(2)
+  })
+})
+
+describe("history", () => {
+  it("opens with the issuing event", () => {
+    const result = createCard(valid, new Date("2026-08-13T10:00:00.000Z"))
+    if (!result.ok) throw new Error("expected the card to be issued")
+    expect(result.card.history).toEqual([
+      { at: "2026-08-13T10:00:00.000Z", from: null, to: "active" },
+    ])
+  })
+
+  it("records every transition in order, oldest first", () => {
+    const result = createCard(valid, new Date("2026-08-13T10:00:00.000Z"))
+    if (!result.ok) throw new Error("expected the card to be issued")
+    const id = result.card.id
+
+    setCardStatus(id, "frozen", new Date("2026-08-14T09:00:00.000Z"))
+    setCardStatus(id, "active", new Date("2026-08-15T09:00:00.000Z"))
+    setCardStatus(id, "cancelled", new Date("2026-08-16T09:00:00.000Z"))
+
+    expect(cardById(id)?.history).toEqual([
+      { at: "2026-08-13T10:00:00.000Z", from: null, to: "active" },
+      { at: "2026-08-14T09:00:00.000Z", from: "active", to: "frozen" },
+      { at: "2026-08-15T09:00:00.000Z", from: "frozen", to: "active" },
+      { at: "2026-08-16T09:00:00.000Z", from: "active", to: "cancelled" },
+    ])
+  })
+
+  it("does not record a transition the server refused", () => {
+    const result = createCard(valid)
+    if (!result.ok) throw new Error("expected the card to be issued")
+    const id = result.card.id
+
+    setCardStatus(id, "cancelled")
+    const before = cardById(id)!.history.length
+    setCardStatus(id, "active")
+    expect(cardById(id)?.history).toHaveLength(before)
+  })
+})
+
 describe("setCardStatus", () => {
   const issue = () => {
     const result = createCard(valid)

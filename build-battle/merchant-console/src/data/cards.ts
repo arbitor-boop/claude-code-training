@@ -23,6 +23,8 @@ export interface IssueCardInput {
   /** The limit as the client typed it, e.g. "250" or "250.00". Converted here, once. */
   limit?: unknown
   currency?: unknown
+  /** Optional replay guard, so a double-click issues one card rather than two. */
+  idempotencyKey?: unknown
 }
 
 interface ValidIssue {
@@ -89,7 +91,7 @@ export function validateIssue(input: IssueCardInput): Validated {
 }
 
 export type IssueResult =
-  | { ok: true; card: Card; cardNumber: string }
+  | { ok: true; card: Card; cardNumber: string; replayed?: true }
   | { ok: false; message: string }
 
 const pad = (n: number, width = 6) => String(n).padStart(width, "0")
@@ -99,12 +101,28 @@ const pad = (n: number, width = 6) => String(n).padStart(width, "0")
  * returned rather than stored — the record keeps the last four and a reference.
  */
 export function createCard(input: IssueCardInput, now = new Date()): IssueResult {
+  const key =
+    typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+      ? input.idempotencyKey.trim()
+      : undefined
+
+  // Ops double-clicking Issue must not produce two cards. The replay returns
+  // the original record, and deliberately not its number: that was revealed
+  // once already and is not recoverable.
+  if (key) {
+    const existing = store.cards.find((card) => card.idempotencyKey === key)
+    if (existing) {
+      return { ok: true, card: existing, cardNumber: "", replayed: true }
+    }
+  }
+
   const validated = validateIssue(input)
   if (!validated.ok) return validated
 
   const { nickname, merchantId, limitMinor, currency } = validated.value
   const cardNumber = generateCardNumber()
   const seq = store.cards.length + 1
+  const createdAt = now.toISOString()
 
   const card: Card = {
     id: `card_${pad(seq)}`,
@@ -116,7 +134,9 @@ export function createCard(input: IssueCardInput, now = new Date()): IssueResult
     status: "active",
     last4: cardNumber.slice(-4),
     reference: `cref_${pad(seq)}`,
-    createdAt: now.toISOString(),
+    createdAt,
+    history: [{ at: createdAt, from: null, to: "active" }],
+    idempotencyKey: key,
   }
 
   store.cards.push(card)
@@ -140,7 +160,11 @@ export type StatusResult =
  * The state machine guard. It lives here rather than in the UI, because the UI
  * is not the enforcement.
  */
-export function setCardStatus(id: string, to: CardStatus): StatusResult {
+export function setCardStatus(
+  id: string,
+  to: CardStatus,
+  now = new Date(),
+): StatusResult {
   const card = cardById(id)
   if (!card) return { ok: false, message: "No such card.", notFound: true }
 
@@ -154,6 +178,7 @@ export function setCardStatus(id: string, to: CardStatus): StatusResult {
     }
   }
 
+  card.history.push({ at: now.toISOString(), from: card.status, to })
   card.status = to
   return { ok: true, card }
 }
